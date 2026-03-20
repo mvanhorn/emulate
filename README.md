@@ -55,50 +55,58 @@ The port can also be set via `EMULATE_PORT` or `PORT` environment variables.
 npm install emulate
 ```
 
+Each call to `createEmulator` starts a single service:
+
 ```typescript
-import { createEmulate } from 'emulate'
+import { createEmulator } from 'emulate'
 
-const emulate = await createEmulate({ port: 4100 })
-// emulate.urls.github  -> 'http://localhost:4101'
-// emulate.urls.vercel  -> 'http://localhost:4100'
+const github = await createEmulator({ service: 'github', port: 4001 })
+const vercel = await createEmulator({ service: 'vercel', port: 4002 })
 
-await emulate.close()
+github.url   // 'http://localhost:4001'
+vercel.url   // 'http://localhost:4002'
+
+await github.close()
+await vercel.close()
 ```
 
 ### Vitest / Jest setup
 
 ```typescript
 // vitest.setup.ts
-import { createEmulate } from 'emulate'
-import type { EmulateInstance } from 'emulate'
+import { createEmulator, type Emulator } from 'emulate'
 
-let emulate: EmulateInstance
+let github: Emulator
+let vercel: Emulator
 
 beforeAll(async () => {
-  emulate = await createEmulate({ port: 4100, services: ['github', 'vercel'] })
-  process.env.GITHUB_URL = emulate.urls.github
-  process.env.VERCEL_URL = emulate.urls.vercel
+  ;[github, vercel] = await Promise.all([
+    createEmulator({ service: 'github', port: 4001 }),
+    createEmulator({ service: 'vercel', port: 4002 }),
+  ])
+  process.env.GITHUB_URL = github.url
+  process.env.VERCEL_URL = vercel.url
 })
 
-afterEach(() => emulate.reset())
-afterAll(() => emulate.close())
+afterEach(() => { github.reset(); vercel.reset() })
+afterAll(() => Promise.all([github.close(), vercel.close()]))
 ```
 
 ### Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `port` | `4000` | Base port (auto-increments per service) |
-| `services` | all | Array of services to start (`'github'`, `'vercel'`, `'google'`) |
+| `service` | *(required)* | Service to emulate: `'github'`, `'vercel'`, or `'google'` |
+| `port` | `4000` | Port for the HTTP server |
 | `seed` | none | Inline seed data (same shape as YAML config) |
 
 ### Instance methods
 
 | Method | Description |
 |--------|-------------|
-| `urls` | Map of service name to base URL |
-| `reset()` | Wipe all stores and replay the seed data |
-| `close()` | Shut down all HTTP servers, returns a Promise |
+| `url` | Base URL of the running server |
+| `reset()` | Wipe the store and replay seed data |
+| `close()` | Shut down the HTTP server, returns a Promise |
 
 ## Configuration
 

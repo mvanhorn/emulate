@@ -1,40 +1,42 @@
-import { describe, it, expect, afterAll } from "vitest";
-import { createEmulate } from "../api.js";
+import { describe, it, expect } from "vitest";
+import { createEmulator } from "../api.js";
 
-describe("createEmulate", () => {
+describe("createEmulator", () => {
   it("starts github and returns a url", async () => {
-    const emulate = await createEmulate({ port: 14000, services: ["github"] });
+    const github = await createEmulator({ service: "github", port: 14000 });
 
-    expect(emulate.urls.github).toBe("http://localhost:14000");
+    expect(github.url).toBe("http://localhost:14000");
 
-    const res = await fetch(`${emulate.urls.github}/user`, {
+    const res = await fetch(`${github.url}/user`, {
       headers: { Authorization: "token gho_test_token_admin" },
     });
     expect(res.status).toBe(200);
-    const body = await res.json() as { login: string };
+    const body = (await res.json()) as { login: string };
     expect(body.login).toBe("admin");
 
-    await emulate.close();
+    await github.close();
   });
 
-  it("starts multiple services on sequential ports", async () => {
-    const emulate = await createEmulate({ port: 14010, services: ["github", "vercel"] });
+  it("starts multiple services independently", async () => {
+    const [github, vercel] = await Promise.all([
+      createEmulator({ service: "github", port: 14010 }),
+      createEmulator({ service: "vercel", port: 14011 }),
+    ]);
 
-    expect(emulate.urls.github).toBe("http://localhost:14010");
-    expect(emulate.urls.vercel).toBe("http://localhost:14011");
+    expect(github.url).toBe("http://localhost:14010");
+    expect(vercel.url).toBe("http://localhost:14011");
 
-    await emulate.close();
+    await Promise.all([github.close(), vercel.close()]);
   });
 
   it("reset wipes and re-seeds stores", async () => {
-    const emulate = await createEmulate({
+    const github = await createEmulator({
+      service: "github",
       port: 14020,
-      services: ["github"],
       seed: { github: { users: [{ login: "test-user" }] } },
     });
 
-    // Create a resource
-    const createRes = await fetch(`${emulate.urls.github}/user/repos`, {
+    const createRes = await fetch(`${github.url}/user/repos`, {
       method: "POST",
       headers: {
         Authorization: "token gho_test_token_admin",
@@ -44,20 +46,20 @@ describe("createEmulate", () => {
     });
     expect(createRes.status).toBe(201);
 
-    // Reset -- repo should be gone
-    emulate.reset();
+    github.reset();
 
-    const listRes = await fetch(`${emulate.urls.github}/user/repos`, {
+    const listRes = await fetch(`${github.url}/user/repos`, {
       headers: { Authorization: "token gho_test_token_admin" },
     });
     expect(listRes.status).toBe(200);
-    const repos = await listRes.json() as unknown[];
+    const repos = (await listRes.json()) as unknown[];
     expect(repos).toHaveLength(0);
 
-    await emulate.close();
+    await github.close();
   });
 
   it("throws on unknown service", async () => {
-    await expect(createEmulate({ services: ["unknown-svc"] })).rejects.toThrow("Unknown service");
+    // @ts-expect-error testing invalid service name
+    await expect(createEmulator({ service: "unknown-svc" })).rejects.toThrow("Unknown service");
   });
 });

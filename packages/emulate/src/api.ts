@@ -10,7 +10,7 @@ const SERVICE_PLUGINS = {
   google: googlePlugin,
 } as const;
 
-const ALL_SERVICES = Object.keys(SERVICE_PLUGINS);
+export type ServiceName = keyof typeof SERVICE_PLUGINS;
 
 export interface SeedConfig {
   tokens?: Record<string, { login: string; scopes?: string[] }>;
@@ -19,21 +19,25 @@ export interface SeedConfig {
   google?: GoogleSeedConfig;
 }
 
-export interface EmulateOptions {
+export interface EmulatorOptions {
+  service: ServiceName;
   port?: number;
-  services?: string[];
   seed?: SeedConfig;
 }
 
-export interface EmulateInstance {
-  urls: Record<string, string>;
+export interface Emulator {
+  url: string;
   reset(): void;
   close(): Promise<void>;
 }
 
-export async function createEmulate(options: EmulateOptions = {}): Promise<EmulateInstance> {
-  const { port: basePort = 4000, seed: seedConfig } = options;
-  const services = options.services ?? ALL_SERVICES;
+export async function createEmulator(options: EmulatorOptions): Promise<Emulator> {
+  const { service, port = 4000, seed: seedConfig } = options;
+
+  const plugin = SERVICE_PLUGINS[service];
+  if (!plugin) {
+    throw new Error(`Unknown service: ${service}`);
+  }
 
   const tokens: Record<string, { login: string; id: number; scopes?: string[] }> = {};
   if (seedConfig?.tokens) {
@@ -45,87 +49,60 @@ export async function createEmulate(options: EmulateOptions = {}): Promise<Emula
     tokens["gho_test_token_admin"] = { login: "admin", id: 2, scopes: ["repo", "user", "admin:org", "admin:repo_hook"] };
   }
 
-  const urls: Record<string, string> = {};
-  const stores: Store[] = [];
-  const seedFns: Array<() => void> = [];
-  const httpServers: ReturnType<typeof serve>[] = [];
+  const baseUrl = `http://localhost:${port}`;
 
-  for (let i = 0; i < services.length; i++) {
-    const svc = services[i];
-    const plugin = SERVICE_PLUGINS[svc as keyof typeof SERVICE_PLUGINS];
-    if (!plugin) {
-      throw new Error(`Unknown service: ${svc}`);
-    }
-
-    const port = basePort + i;
-    const baseUrl = `http://localhost:${port}`;
-    urls[svc] = baseUrl;
-
-    let serverStore: Store | undefined;
-    const appKeyResolver: AppKeyResolver | undefined =
-      svc === "github"
-        ? (appId: number) => {
-            try {
-              const gh = getGitHubStore(serverStore!);
-              const ghApp = gh.apps.all().find((a) => a.app_id === appId);
-              if (!ghApp) return null;
-              return { privateKey: ghApp.private_key, slug: ghApp.slug, name: ghApp.name };
-            } catch {
-              return null;
-            }
+  let serverStore: Store | undefined;
+  const appKeyResolver: AppKeyResolver | undefined =
+    service === "github"
+      ? (appId: number) => {
+          try {
+            const gh = getGitHubStore(serverStore!);
+            const ghApp = gh.apps.all().find((a) => a.app_id === appId);
+            if (!ghApp) return null;
+            return { privateKey: ghApp.private_key, slug: ghApp.slug, name: ghApp.name };
+          } catch {
+            return null;
           }
-        : undefined;
+        }
+      : undefined;
 
-    let fallbackUser: AuthFallback | undefined;
-    if (svc === "vercel") {
-      const firstLogin = seedConfig?.vercel?.users?.[0]?.username ?? "admin";
-      fallbackUser = { login: firstLogin, id: 1, scopes: [] };
-    } else if (svc === "github") {
-      const firstLogin = seedConfig?.github?.users?.[0]?.login ?? "admin";
-      fallbackUser = { login: firstLogin, id: 1, scopes: ["repo", "user", "admin:org", "admin:repo_hook"] };
-    } else if (svc === "google") {
-      const firstEmail = seedConfig?.google?.users?.[0]?.email ?? "testuser@gmail.com";
-      fallbackUser = { login: firstEmail, id: 1, scopes: ["openid", "email", "profile"] };
-    }
-
-    const { app, store } = createServer(plugin, { port, baseUrl, tokens, appKeyResolver, fallbackUser });
-    serverStore = store;
-    stores.push(store);
-
-    const svcSeed = () => {
-      plugin.seed?.(store, baseUrl);
-      if (svc === "vercel" && seedConfig?.vercel) seedVercel(store, baseUrl, seedConfig.vercel);
-      if (svc === "github" && seedConfig?.github) seedGitHub(store, baseUrl, seedConfig.github);
-      if (svc === "google" && seedConfig?.google) seedGoogle(store, baseUrl, seedConfig.google);
-    };
-    svcSeed();
-    seedFns.push(svcSeed);
-
-    const httpServer = serve({ fetch: app.fetch, port });
-    httpServers.push(httpServer);
+  let fallbackUser: AuthFallback | undefined;
+  if (service === "vercel") {
+    const firstLogin = seedConfig?.vercel?.users?.[0]?.username ?? "admin";
+    fallbackUser = { login: firstLogin, id: 1, scopes: [] };
+  } else if (service === "github") {
+    const firstLogin = seedConfig?.github?.users?.[0]?.login ?? "admin";
+    fallbackUser = { login: firstLogin, id: 1, scopes: ["repo", "user", "admin:org", "admin:repo_hook"] };
+  } else if (service === "google") {
+    const firstEmail = seedConfig?.google?.users?.[0]?.email ?? "testuser@gmail.com";
+    fallbackUser = { login: firstEmail, id: 1, scopes: ["openid", "email", "profile"] };
   }
 
+  const { app, store } = createServer(plugin, { port, baseUrl, tokens, appKeyResolver, fallbackUser });
+  serverStore = store;
+
+  const seed = () => {
+    plugin.seed?.(store, baseUrl);
+    if (service === "vercel" && seedConfig?.vercel) seedVercel(store, baseUrl, seedConfig.vercel);
+    if (service === "github" && seedConfig?.github) seedGitHub(store, baseUrl, seedConfig.github);
+    if (service === "google" && seedConfig?.google) seedGoogle(store, baseUrl, seedConfig.google);
+  };
+  seed();
+
+  const httpServer = serve({ fetch: app.fetch, port });
+
   return {
-    urls,
+    url: baseUrl,
     reset() {
-      for (let i = 0; i < stores.length; i++) {
-        stores[i].reset();
-        seedFns[i]();
-      }
+      store.reset();
+      seed();
     },
     close(): Promise<void> {
-      return new Promise((resolve) => {
-        let remaining = httpServers.length;
-        if (remaining === 0) {
-          resolve();
-          return;
-        }
-        for (const srv of httpServers) {
-          srv.close(() => {
-            remaining--;
-            if (remaining === 0) resolve();
-          });
-        }
+      return new Promise((resolve, reject) => {
+        httpServer.close((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
       });
     },
   };
