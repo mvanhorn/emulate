@@ -1,6 +1,6 @@
 {
   "name": "emulate",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local drop-in replacement services for CI and no-network sandboxes",
   "license": "Apache-2.0",
   "type": "module",
@@ -32,21 +32,22 @@
     "emulate": "./dist/index.js"
   },
   "scripts": {
+    "prepack": "cp ../../README.md .",
     "build": "tsup",
     "dev": "tsup --watch",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
     "@hono/node-server": "^1",
-    "@internal/core": "workspace:*",
-    "@internal/github": "workspace:*",
-    "@internal/google": "workspace:*",
-    "@internal/vercel": "workspace:*",
     "commander": "^14",
     "picocolors": "^1.1.1",
     "yaml": "^2"
   },
   "devDependencies": {
+    "@internal/core": "workspace:*",
+    "@internal/github": "workspace:*",
+    "@internal/google": "workspace:*",
+    "@internal/vercel": "workspace:*",
     "tsup": "^8",
     "typescript": "^5.7"
   }
