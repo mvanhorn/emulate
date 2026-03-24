@@ -185,7 +185,7 @@ export function conversationsRoutes(ctx: RouteContext): void {
       });
     }
 
-    return slackOk(c, { ok: true });
+    return slackOk(c, {});
   });
 
   // conversations.members

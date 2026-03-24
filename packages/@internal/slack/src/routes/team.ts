@@ -1,6 +1,6 @@
 import type { RouteContext } from "@internal/core";
 import { getSlackStore } from "../store.js";
-import { slackOk, slackError } from "../helpers.js";
+import { slackOk, slackError, parseSlackBody } from "../helpers.js";
 
 export function teamRoutes(ctx: RouteContext): void {
   const { app, store } = ctx;
@@ -24,12 +24,12 @@ export function teamRoutes(ctx: RouteContext): void {
   });
 
   // bots.info
-  app.post("/api/bots.info", (c) => {
+  app.post("/api/bots.info", async (c) => {
     const authUser = c.get("authUser");
     if (!authUser) return slackError(c, "not_authed");
 
-    const body = c.req.query("bot");
-    const botId = body ?? "";
+    const body = await parseSlackBody(c);
+    const botId = typeof body.bot === "string" ? body.bot : "";
 
     const bot = ss().bots.findOneBy("bot_id", botId);
     if (!bot) return slackError(c, "bot_not_found");
