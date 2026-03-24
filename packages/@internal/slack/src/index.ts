@@ -1,0 +1,220 @@
+import type { Hono } from "hono";
+import type { ServicePlugin, Store, WebhookDispatcher, TokenMap, AppEnv, RouteContext } from "@internal/core";
+import { getSlackStore } from "./store.js";
+import { generateSlackId } from "./helpers.js";
+import { authRoutes } from "./routes/auth.js";
+import { chatRoutes } from "./routes/chat.js";
+import { conversationsRoutes } from "./routes/conversations.js";
+import { usersRoutes } from "./routes/users.js";
+import { reactionsRoutes } from "./routes/reactions.js";
+import { teamRoutes } from "./routes/team.js";
+import { oauthRoutes } from "./routes/oauth.js";
+
+export { getSlackStore, type SlackStore } from "./store.js";
+export * from "./entities.js";
+
+export interface SlackSeedConfig {
+  port?: number;
+  team?: {
+    name?: string;
+    domain?: string;
+  };
+  users?: Array<{
+    name: string;
+    real_name?: string;
+    email?: string;
+    is_admin?: boolean;
+  }>;
+  channels?: Array<{
+    name: string;
+    topic?: string;
+    purpose?: string;
+    is_private?: boolean;
+  }>;
+  bots?: Array<{
+    name: string;
+  }>;
+  oauth_apps?: Array<{
+    client_id: string;
+    client_secret: string;
+    name: string;
+    redirect_uris: string[];
+  }>;
+}
+
+function seedDefaults(store: Store, _baseUrl: string): void {
+  const ss = getSlackStore(store);
+
+  const teamId = generateSlackId("T");
+
+  ss.teams.insert({
+    team_id: teamId,
+    name: "Emulate",
+    domain: "emulate",
+  });
+
+  const userId = generateSlackId("U");
+  ss.users.insert({
+    user_id: userId,
+    team_id: teamId,
+    name: "admin",
+    real_name: "Admin User",
+    email: "admin@emulate.dev",
+    is_admin: true,
+    is_bot: false,
+    deleted: false,
+    profile: {
+      display_name: "admin",
+      real_name: "Admin User",
+      email: "admin@emulate.dev",
+      image_48: "",
+      image_192: "",
+    },
+  });
+
+  const generalId = generateSlackId("C");
+  ss.channels.insert({
+    channel_id: generalId,
+    team_id: teamId,
+    name: "general",
+    is_channel: true,
+    is_private: false,
+    is_archived: false,
+    topic: { value: "General discussion", creator: userId, last_set: Math.floor(Date.now() / 1000) },
+    purpose: { value: "A place for general discussion", creator: userId, last_set: Math.floor(Date.now() / 1000) },
+    members: [userId],
+    creator: userId,
+    num_members: 1,
+  });
+
+  const randomId = generateSlackId("C");
+  ss.channels.insert({
+    channel_id: randomId,
+    team_id: teamId,
+    name: "random",
+    is_channel: true,
+    is_private: false,
+    is_archived: false,
+    topic: { value: "Random stuff", creator: userId, last_set: Math.floor(Date.now() / 1000) },
+    purpose: { value: "A place for non-work-related chatter", creator: userId, last_set: Math.floor(Date.now() / 1000) },
+    members: [userId],
+    creator: userId,
+    num_members: 1,
+  });
+}
+
+export function seedFromConfig(store: Store, _baseUrl: string, config: SlackSeedConfig): void {
+  const ss = getSlackStore(store);
+
+  if (config.team) {
+    const existing = ss.teams.all()[0];
+    if (existing) {
+      ss.teams.update(existing.id, {
+        name: config.team.name ?? existing.name,
+        domain: config.team.domain ?? existing.domain,
+      });
+    }
+  }
+
+  const team = ss.teams.all()[0];
+  const teamId = team?.team_id ?? "T000000001";
+
+  if (config.users) {
+    for (const u of config.users) {
+      const existing = ss.users.all().find((eu) => eu.name === u.name);
+      if (existing) continue;
+
+      const userId = generateSlackId("U");
+      const email = u.email ?? `${u.name}@emulate.dev`;
+      ss.users.insert({
+        user_id: userId,
+        team_id: teamId,
+        name: u.name,
+        real_name: u.real_name ?? u.name,
+        email,
+        is_admin: u.is_admin ?? false,
+        is_bot: false,
+        deleted: false,
+        profile: {
+          display_name: u.name,
+          real_name: u.real_name ?? u.name,
+          email,
+          image_48: "",
+          image_192: "",
+        },
+      });
+    }
+  }
+
+  if (config.channels) {
+    for (const ch of config.channels) {
+      const existing = ss.channels.findOneBy("name", ch.name);
+      if (existing) continue;
+
+      const creator = ss.users.all()[0]?.user_id ?? "U000000001";
+      const now = Math.floor(Date.now() / 1000);
+      const isPrivate = ch.is_private ?? false;
+
+      ss.channels.insert({
+        channel_id: generateSlackId("C"),
+        team_id: teamId,
+        name: ch.name,
+        is_channel: !isPrivate,
+        is_private: isPrivate,
+        is_archived: false,
+        topic: { value: ch.topic ?? "", creator, last_set: now },
+        purpose: { value: ch.purpose ?? "", creator, last_set: now },
+        members: ss.users.all().map((u) => u.user_id),
+        creator,
+        num_members: ss.users.all().length,
+      });
+    }
+  }
+
+  if (config.bots) {
+    for (const b of config.bots) {
+      const existing = ss.bots.all().find((eb) => eb.name === b.name);
+      if (existing) continue;
+
+      ss.bots.insert({
+        bot_id: generateSlackId("B"),
+        name: b.name,
+        deleted: false,
+        icons: { image_48: "" },
+      });
+    }
+  }
+
+  if (config.oauth_apps) {
+    for (const oa of config.oauth_apps) {
+      const existing = ss.oauthApps.findOneBy("client_id", oa.client_id);
+      if (existing) continue;
+
+      ss.oauthApps.insert({
+        client_id: oa.client_id,
+        client_secret: oa.client_secret,
+        name: oa.name,
+        redirect_uris: oa.redirect_uris,
+      });
+    }
+  }
+}
+
+export const slackPlugin: ServicePlugin = {
+  name: "slack",
+  register(app: Hono<AppEnv>, store: Store, webhooks: WebhookDispatcher, baseUrl: string, tokenMap?: TokenMap): void {
+    const ctx: RouteContext = { app, store, webhooks, baseUrl, tokenMap };
+    authRoutes(ctx);
+    chatRoutes(ctx);
+    conversationsRoutes(ctx);
+    usersRoutes(ctx);
+    reactionsRoutes(ctx);
+    teamRoutes(ctx);
+    oauthRoutes(ctx);
+  },
+  seed(store: Store, baseUrl: string): void {
+    seedDefaults(store, baseUrl);
+  },
+};
+
+export default slackPlugin;
