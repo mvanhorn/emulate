@@ -64,3 +64,12 @@ export interface SlackOAuthApp extends Entity {
   name: string;
   redirect_uris: string[];
 }
+
+export interface SlackIncomingWebhook extends Entity {
+  token: string;
+  team_id: string;
+  bot_id: string;
+  default_channel: string;
+  label: string;
+  url: string;
+}

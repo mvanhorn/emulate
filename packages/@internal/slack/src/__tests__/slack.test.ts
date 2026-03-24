@@ -651,3 +651,108 @@ describe("Slack plugin - OAuth flow", () => {
     expect(token.authed_user.id).toBe("U000000001");
   });
 });
+
+describe("Slack plugin - Incoming Webhooks", () => {
+  let app: Hono;
+  let store: Store;
+
+  beforeEach(() => {
+    ({ app, store } = createTestApp());
+  });
+
+  it("posts a message via incoming webhook", async () => {
+    const ss = getSlackStore(store);
+    const webhook = ss.incomingWebhooks.all()[0];
+    expect(webhook).toBeDefined();
+
+    const res = await app.request(`${base}${webhook.url}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Deploy succeeded!" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+
+    // Verify message was stored
+    const messages = ss.messages.findBy("channel_id", "C000000001");
+    expect(messages.length).toBe(1);
+    expect(messages[0].text).toBe("Deploy succeeded!");
+    expect(messages[0].subtype).toBe("bot_message");
+  });
+
+  it("posts to a specific channel via webhook", async () => {
+    const ss = getSlackStore(store);
+    const webhook = ss.incomingWebhooks.all()[0];
+
+    const res = await app.request(`${base}${webhook.url}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Random message", channel: "random" }),
+    });
+    expect(res.status).toBe(200);
+
+    const randomCh = ss.channels.findOneBy("name", "random")!;
+    const messages = ss.messages.findBy("channel_id", randomCh.channel_id);
+    expect(messages.length).toBe(1);
+    expect(messages[0].text).toBe("Random message");
+  });
+
+  it("rejects empty webhook payload", async () => {
+    const ss = getSlackStore(store);
+    const webhook = ss.incomingWebhooks.all()[0];
+
+    const res = await app.request(`${base}${webhook.url}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("Slack plugin - Message Inspector", () => {
+  let app: Hono;
+  let store: Store;
+
+  beforeEach(() => {
+    ({ app, store } = createTestApp());
+  });
+
+  it("renders the message inspector page", async () => {
+    const res = await app.request(`${base}/`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Message Inspector");
+    expect(html).toContain("general");
+    expect(html).toContain("random");
+    expect(html).toContain("Slack Emulator");
+  });
+
+  it("shows posted messages in the inspector", async () => {
+    const ss = getSlackStore(store);
+    const ch = ss.channels.all()[0];
+
+    // Post a message first
+    await app.request(`${base}/api/chat.postMessage`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ channel: ch.channel_id, text: "Inspector test message" }),
+    });
+
+    const res = await app.request(`${base}/?channel=${ch.channel_id}`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Inspector test message");
+  });
+
+  it("switches channels via query param", async () => {
+    const ss = getSlackStore(store);
+    const randomCh = ss.channels.findOneBy("name", "random")!;
+
+    const res = await app.request(`${base}/?channel=${randomCh.channel_id}`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("random");
+    expect(html).toContain("Random stuff");
+  });
+});

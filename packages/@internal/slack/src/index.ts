@@ -9,6 +9,8 @@ import { usersRoutes } from "./routes/users.js";
 import { reactionsRoutes } from "./routes/reactions.js";
 import { teamRoutes } from "./routes/team.js";
 import { oauthRoutes } from "./routes/oauth.js";
+import { webhookRoutes } from "./routes/webhooks.js";
+import { inspectorRoutes } from "./routes/inspector.js";
 
 export { getSlackStore, type SlackStore } from "./store.js";
 export * from "./entities.js";
@@ -40,6 +42,11 @@ export interface SlackSeedConfig {
     name: string;
     redirect_uris: string[];
   }>;
+  incoming_webhooks?: Array<{
+    channel: string;
+    label?: string;
+  }>;
+  signing_secret?: string;
 }
 
 function seedDefaults(store: Store, _baseUrl: string): void {
@@ -98,6 +105,16 @@ function seedDefaults(store: Store, _baseUrl: string): void {
     members: [userId],
     creator: userId,
     num_members: 1,
+  });
+
+  // Default incoming webhook for #general
+  ss.incomingWebhooks.insert({
+    token: "X000000001",
+    team_id: teamId,
+    bot_id: "B000000001",
+    default_channel: "general",
+    label: "Default Webhook",
+    url: `/services/${teamId}/B000000001/X000000001`,
   });
 }
 
@@ -196,6 +213,27 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: SlackSeed
       });
     }
   }
+
+  if (config.incoming_webhooks) {
+    const firstBot = ss.bots.all()[0];
+    const botId = firstBot?.bot_id ?? "B000000001";
+
+    for (const wh of config.incoming_webhooks) {
+      const token = generateSlackId("X");
+      ss.incomingWebhooks.insert({
+        token,
+        team_id: teamId,
+        bot_id: botId,
+        default_channel: wh.channel,
+        label: wh.label ?? wh.channel,
+        url: `/services/${teamId}/${botId}/${token}`,
+      });
+    }
+  }
+
+  if (config.signing_secret) {
+    store.setData("slack.signing_secret", config.signing_secret);
+  }
 }
 
 export const slackPlugin: ServicePlugin = {
@@ -209,6 +247,8 @@ export const slackPlugin: ServicePlugin = {
     reactionsRoutes(ctx);
     teamRoutes(ctx);
     oauthRoutes(ctx);
+    webhookRoutes(ctx);
+    inspectorRoutes(ctx);
   },
   seed(store: Store, baseUrl: string): void {
     seedDefaults(store, baseUrl);
