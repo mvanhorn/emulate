@@ -30,6 +30,34 @@ export function checkoutSessionRoutes({ app, store, webhooks, baseUrl }: RouteCo
     const body = await parseStripeBody(c);
     if (!body.mode) return stripeError(c, 400, "invalid_request_error", "Missing required param: mode.", undefined, "mode");
 
+    if (body.customer && !ss.customers.findOneBy("stripe_id", body.customer as string)) {
+      return stripeError(c, 400, "invalid_request_error", `No such customer: '${body.customer}'`, "resource_missing", "customer");
+    }
+
+    const lineItems: Array<{ price: string; quantity: number }> = [];
+    if (body.line_items) {
+      if (!Array.isArray(body.line_items)) {
+        return stripeError(c, 400, "invalid_request_error", "line_items must be an array.", undefined, "line_items");
+      }
+      for (let i = 0; i < body.line_items.length; i++) {
+        const li = body.line_items[i] as Record<string, unknown>;
+        if (!li || typeof li !== "object") {
+          return stripeError(c, 400, "invalid_request_error", `Invalid line_items[${i}]: must be an object.`, undefined, `line_items[${i}]`);
+        }
+        if (!li.price || typeof li.price !== "string") {
+          return stripeError(c, 400, "invalid_request_error", `Missing required param: line_items[${i}][price].`, undefined, `line_items[${i}][price]`);
+        }
+        if (!ss.prices.findOneBy("stripe_id", li.price)) {
+          return stripeError(c, 400, "invalid_request_error", `No such price: '${li.price}'`, "resource_missing", `line_items[${i}][price]`);
+        }
+        const qty = typeof li.quantity === "number" ? li.quantity : parseInt(li.quantity as string, 10);
+        if (!Number.isFinite(qty) || qty < 1) {
+          return stripeError(c, 400, "invalid_request_error", `Invalid line_items[${i}][quantity]: must be a positive integer.`, undefined, `line_items[${i}][quantity]`);
+        }
+        lineItems.push({ price: li.price, quantity: qty });
+      }
+    }
+
     const session = ss.checkoutSessions.insert({
       stripe_id: stripeId("cs"),
       mode: body.mode as string,
@@ -38,7 +66,7 @@ export function checkoutSessionRoutes({ app, store, webhooks, baseUrl }: RouteCo
       customer_id: (body.customer as string) ?? null,
       success_url: (body.success_url as string) ?? null,
       cancel_url: (body.cancel_url as string) ?? null,
-      line_items: (body.line_items as any[]) ?? [],
+      line_items: lineItems,
       metadata: (body.metadata as Record<string, string>) ?? {},
     });
     return c.json(formatSession(session, baseUrl), 200);

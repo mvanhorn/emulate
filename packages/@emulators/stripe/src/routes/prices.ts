@@ -37,6 +37,9 @@ export function priceRoutes({ app, store, webhooks }: RouteContext): void {
     if (!body.currency || !body.product) {
       return stripeError(c, 400, "invalid_request_error", "Missing required param: currency and product are required.", undefined, "currency");
     }
+    if (!ss.products.findOneBy("stripe_id", body.product as string)) {
+      return stripeError(c, 400, "invalid_request_error", `No such product: '${body.product}'`, "resource_missing", "product");
+    }
     const price = ss.prices.insert({
       stripe_id: stripeId("price"),
       product_id: body.product as string,

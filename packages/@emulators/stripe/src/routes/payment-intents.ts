@@ -48,6 +48,10 @@ export function paymentIntentRoutes({ app, store, webhooks }: RouteContext): voi
       return stripeError(c, 400, "invalid_request_error", "Missing required param: amount and currency are required.", undefined, "amount");
     }
 
+    if (body.customer && !ss.customers.findOneBy("stripe_id", body.customer as string)) {
+      return stripeError(c, 400, "invalid_request_error", `No such customer: '${body.customer}'`, "resource_missing", "customer");
+    }
+
     const status: PaymentIntentStatus = body.payment_method
       ? "requires_confirmation"
       : "requires_payment_method";
@@ -125,7 +129,7 @@ export function paymentIntentRoutes({ app, store, webhooks }: RouteContext): voi
       customer_id: updated.customer_id,
       payment_intent_id: updated.stripe_id,
       description: updated.description,
-      metadata: {},
+      metadata: updated.metadata,
     });
 
     await webhooks.dispatch(
