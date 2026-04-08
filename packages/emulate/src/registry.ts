@@ -27,6 +27,7 @@ const SERVICE_NAME_LIST = [
   "stripe",
   "mongoatlas",
   "clerk",
+  "twilio",
 ] as const;
 export type ServiceName = (typeof SERVICE_NAME_LIST)[number];
 export const SERVICE_NAMES: readonly ServiceName[] = SERVICE_NAME_LIST;
@@ -437,6 +438,30 @@ export const SERVICE_REGISTRY: Record<ServiceName, ServiceEntry> = {
           name: "Emulate App",
           redirect_uris: ["http://localhost:3000/api/auth/callback/clerk"],
         }],
+      },
+    },
+  },
+  twilio: {
+    label: "Twilio SMS, voice, and verification emulator",
+    endpoints: "Messages (send, list, get), Calls (create, list), Verify (send code, check code), inbox UI",
+    async load() {
+      const mod = await import("@emulators/twilio");
+      return { plugin: mod.twilioPlugin, seedFromConfig: mod.seedFromConfig };
+    },
+    defaultFallback() {
+      return { login: "AC_test_account", id: 1, scopes: [] };
+    },
+    initConfig: {
+      twilio: {
+        account_sid: "AC_test_account",
+        auth_token: "test_auth_token",
+        phone_numbers: ["+15551234567"],
+        verify_services: [
+          {
+            sid: "VA_test_service",
+            friendly_name: "My App Verify",
+          },
+        ],
       },
     },
   },
