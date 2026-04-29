@@ -57,7 +57,6 @@ function createTestApp() {
       ],
     },
     webhooks,
-    tokenMap,
   );
 
   return { app, store, tokenMap };
